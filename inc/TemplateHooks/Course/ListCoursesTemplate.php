@@ -32,11 +32,13 @@ class ListCoursesTemplate {
 		add_action( 'learn-press/list-courses/layout', [ $this, 'layout_courses' ] );
 		add_action( 'learn-press/rest-api/courses/suggest/layout', [ $this, 'sections_course_suggest' ] );
 		add_action( 'learn-press/archive-course/sidebar', [ $this, 'sidebar' ] );
+		add_action( 'learn-press/list-courses/layout_sergio_home', [ $this, 'layout_courses_sergio_home' ] );
 		add_filter( 'lp/rest/ajax/allow_callback', [ $this, 'allow_callback' ] );
 	}
 
 	public function allow_callback( $callbacks ) {
 		$callbacks[] = get_class( $this ) . ':render_courses';
+		$callbacks[] = get_class( $this ) . ':render_courses_sergio_home'; 
 
 		return $callbacks;
 	}
@@ -72,6 +74,36 @@ class ListCoursesTemplate {
 			$content                         = TemplateAJAX::load_content_via_ajax( $args, $callback );
 		}
 
+		echo Template::instance()->nest_elements( $html_wrapper, $content );
+	}
+
+
+	public function layout_courses_sergio_home() {
+		$html_wrapper = [
+			'<div class="lp-list-courses-default">' => '</div>',
+		];
+	
+		$callback = [
+			'class'  => get_class( $this ),
+			'method' => 'render_courses_sergio_home', // 👈 QUI cambiato!
+		];
+	
+		$args = lp_archive_skeleton_get_args();
+		$args['id_url'] = 'list-courses-default';
+		$args['courses_load_ajax'] = LP_Settings_Courses::is_ajax_load_courses() ? 1 : 0;
+		$args['courses_first_no_ajax'] = LP_Settings_Courses::is_no_load_ajax_first_courses() ? 1 : 0;
+	
+		//print_r($args); // puoi anche toglierlo ora se vuoi
+	
+		// Load list courses via AJAX o no
+		if ( LP_Settings_Courses::is_ajax_load_courses() && ! LP_Settings_Courses::is_no_load_ajax_first_courses() ) {
+			$content = TemplateAJAX::load_content_via_ajax( $args, $callback );
+		} else {
+			$content_obj = static::render_courses_sergio_home( $args ); // 👈 QUI cambiato!
+			$args['html_no_load_ajax_first'] = $content_obj->content;
+			$content = TemplateAJAX::load_content_via_ajax( $args, $callback );
+		}
+	
 		echo Template::instance()->nest_elements( $html_wrapper, $content );
 	}
 
@@ -170,6 +202,62 @@ class ListCoursesTemplate {
 		$content->total_pages = $total_pages;
 		$content->paged       = $paged;
 
+		return $content;
+	}
+
+
+	/**
+	 * Render template list courses with settings param.
+	 *
+	 * @param array $settings
+	 *
+	 * @return stdClass { content: string_html }
+	 * @since 4.2.5.7
+	 * @version 1.0.4
+	 */
+	public static function render_courses_sergio_home( array $settings = [] ): stdClass {
+		$filter = new LP_Course_Filter();
+		Courses::handle_params_for_query_courses( $filter, $settings );
+	
+		if ( ! empty( $settings['page_term_id_current'] ) && empty( $settings['term_id'] ) ) {
+			$filter->term_ids[] = $settings['page_term_id_current'];
+		} elseif ( ! empty( $settings['page_tag_id_current'] ) && empty( $settings['tag_id'] ) ) {
+			$filter->tag_ids[] = $settings['page_tag_id_current'];
+		}
+	
+		$total_rows = 0;
+		$courses = Courses::get_courses( $filter, $total_rows );
+		$total_pages = LP_Database::get_total_pages( $filter->limit, $total_rows );
+		$settings['total_pages'] = $total_pages;
+		$settings['total_rows'] = $total_rows;
+		$settings['courses_per_page'] = $filter->limit;
+		$skin = $settings['skin'] ?? ( wp_is_mobile() ? 'grid' : learn_press_get_courses_layout() );
+		$paged = $settings['paged'] ?? 1;
+		$settings['paged'] = $paged;
+	
+		// HTML solo corsi
+		$html_courses = '';
+		if ( empty( $courses ) ) {
+			$html_courses = Template::print_message( __( 'No courses found', 'learnpress' ), 'info', false );
+		} else {
+			foreach ( $courses as $courseObj ) {
+				$course = CourseModel::find( $courseObj->ID, true );
+				$html_courses .= static::render_course( $course, $settings );
+			}
+		}
+	
+		// Solo la lista corsi, senza top bar né paginazione
+		$section_courses = [
+			'wrapper'     => sprintf( '<ul class="learn-press-courses lp-list-courses-no-css %1$s" data-layout="%1$s">', $skin ),
+			'courses'     => $html_courses,
+			'wrapper_end' => '</ul>',
+		];
+	
+		$content = new stdClass();
+		$content->content = Template::combine_components( $section_courses );
+		$content->total_pages = $total_pages;
+		$content->paged = $paged;
+	
 		return $content;
 	}
 
